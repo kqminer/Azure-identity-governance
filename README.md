@@ -39,7 +39,7 @@ Access comes from group membership, not direct user assignments.
 A user holding only Lab Tag Operator can apply tags, which a plain Reader cannot.
 
 ### 3. Azure Policy (tag requirement)
-![Policy assignment](screenshots/policy%20assignment.png)
+![Policy assignment](screenshots/policy-assignment.png)
 ![Policy denied](screenshots/policy%20behavior.png)
 ![Resource group without tags](screenshots/rgiamnotags.png)
 The assigned policy blocks creation of a resource that lacks the required tag.
