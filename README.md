@@ -1,22 +1,19 @@
-# Azure Identity & Governance for a Healthcare Application
+# Azure Identity & Governance Lab
 
 ## Overview
 
-This project simulates an Azure identity and governance deployment for **Contoso Health Services**, a fictional healthcare organization building a patient-services application.
+I built this lab to practice the identity and governance work that comes with managing Azure resources.
 
-The goal was to create a small, controlled Azure environment that demonstrates the core governance tasks expected of an Azure administrator:
+Instead of assigning permissions directly to individual users, I used Microsoft Entra groups and Azure RBAC. I also worked with a custom role, Azure Policy, resource locks, and Bicep.
 
-- Group-based Azure RBAC
-- Least-privilege access
-- Custom role design
-- Azure Policy enforcement
-- Resource locks
-- Permission testing
-- Bicep infrastructure as code
-- Azure CLI validation
-- Cleanup and verification
+The main goal was to answer a few practical questions:
 
-Rather than only configuring resources in the portal, I tested whether the permissions and controls behaved as intended.
+- How do I give developers the access they need without giving them too much?
+- How can I give a compliance user visibility without letting them make changes?
+- How does RBAC inheritance work?
+- How can Azure Policy stop resources from being created incorrectly?
+- How do resource locks protect important resources?
+- Can I rebuild the same setup with Infrastructure as Code?
 
 ---
 
@@ -24,70 +21,69 @@ Rather than only configuring resources in the portal, I tested whether the permi
 
 ```text
 Microsoft Entra ID
-│
-├── Lab Developer
-│   └── grp-lab-developers
-│       └── Contributor
-│
-└── Lab Auditor
-    └── grp-lab-compliance
-        ├── Reader
-        └── Lab Tag Operator
+        |
+        +-- grp-lab-developers
+        |      |
+        |      +-- Contributor
+        |
+        +-- grp-lab-compliance
+               |
+               +-- Reader
+               +-- Lab Tag Operator
 
 Azure Subscription
-│
-├── rg-iam-lab
-│   ├── Azure Policy
-│   ├── CanNotDelete lock
-│   └── Test virtual networks
-│
-└── rg-iam-lab-iac
-    └── Same governance configuration rebuilt with Bicep
+        |
+        +-- rg-iam-lab
+        |      |
+        |      +-- Azure RBAC
+        |      +-- Azure Policy
+        |      +-- CanNotDelete lock
+        |
+        +-- rg-iam-lab-iac
+               |
+               +-- Bicep rebuild
 ```
-
-**Region:** Central US
 
 ---
 
 ## 1. Group-Based RBAC
 
-Access was assigned to **security groups instead of directly to users**.
+I used Entra groups instead of assigning roles directly to individual users.
 
-| Principal | Access |
-|---|---|
-| `grp-lab-developers` | Contributor |
-| `grp-lab-compliance` | Reader |
-| `lab.developer` | Contributor through group membership |
-| `lab.auditor` | Reader through group membership |
+This makes access easier to manage because permissions stay attached to the group. Users can be added or removed from the group without changing the Azure role assignments themselves.
 
-![Group membership](screenshots/group%20members.png)
+![Group members](screenshots/group%20members.png)
 
-The developer successfully deployed a resource, confirming that Contributor permissions were effective.
-
-![Developer deployment success](screenshots/developer-deployment-success.png)
-
-The auditor could view resources but a write attempt was denied, confirming the intended Reader boundary.
-
-![Auditor write denied](screenshots/12-auditor-write-denied.png)
-
-<details>
-<summary><strong>Additional RBAC evidence</strong></summary>
+The developer group received **Contributor** access at the resource-group level.
 
 ![Developer permissions](screenshots/developer%20permissions.png)
 
+I tested the developer account by deploying a resource into the resource group.
+
+![Developer deployment success](screenshots/developer-deployment-success.png)
+
+The compliance group received **Reader**, which allowed the auditor to view resources without changing them.
+
 ![Auditor effective access](screenshots/auditor%20effective%20access.png)
 
-![Auditor sees VNet](screenshots/auditor-sees-vnet.png)
+I also tested a write operation with the auditor account and confirmed that it was denied.
 
-</details>
+![Auditor write denied](screenshots/12-auditor-write-denied.png)
 
 ---
 
-## 2. Least-Privilege Custom Role
+## 2. Custom Role
 
-Reader access was intentionally too limited for the auditor to modify tags.
+I created a custom role called **Lab Tag Operator**.
 
-To solve that without granting Contributor, I created a custom role named **Lab Tag Operator** with:
+The role allows the user to:
+
+- read Azure resources
+- write resource tags
+
+It does not give the user broad Contributor permissions.
+
+The custom role included:
 
 ```text
 */read
@@ -96,160 +92,192 @@ Microsoft.Resources/tags/write
 
 ![Custom role JSON](screenshots/custom-role-json.png)
 
-After assigning the custom role to the compliance group, the auditor could modify tags while retaining Reader for general resource access.
+I assigned the role to the compliance group.
 
-![Tag update success](screenshots/tagged-success.png)
+![Tag Operator assigned](screenshots/tag-operator-assigned.png)
 
-This demonstrates a common governance pattern: **add only the missing permission instead of broadening access unnecessarily**.
-
-<details>
-<summary><strong>Role assignment evidence</strong></summary>
-
-![Tag operator assigned](screenshots/tag-operator-assigned.png)
-
-</details>
+This gave the auditor enough access to work with tags without giving the account permission to manage the rest of the resource.
 
 ---
 
 ## 3. Azure Policy
 
-A built-in Azure Policy was assigned to require an **Environment** tag on resources.
+I assigned a policy that requires resources to include an `Environment` tag.
+
+I then intentionally tried to deploy a resource without the required tag.
+
+Azure blocked the deployment.
 
 ![Policy assignment](screenshots/policy-assignment.png)
 
-A deployment without the required tag was denied.
+![Policy denied deployment](screenshots/policy-denied.png)
 
-![Policy denial](screenshots/policy-denied.png)
+After adding the required tag, the deployment succeeded.
 
-This demonstrates the difference between two Azure governance controls:
+![Tagged resource success](screenshots/tagged-success.png)
 
-- **RBAC:** Who is allowed to perform an action?
-- **Azure Policy:** Is the requested configuration allowed?
+This was a useful example of the difference between **RBAC** and **Azure Policy**.
 
-A user can have sufficient RBAC permissions and still have a deployment denied by Policy.
+RBAC answers:
 
-The resource group itself remained untagged because **Require a tag on resources** applies to resources inside the group, not the resource group itself.
+> Who is allowed to do something?
 
----
+Policy answers:
 
-## 4. Resource Protection with Locks
+> What configurations are allowed?
 
-A `CanNotDelete` lock named `prevent-rg-deletion` was applied to the lab resource group.
-
-![Delete lock](screenshots/delete%20lock.png)
-
-A deletion attempt against a protected resource was blocked.
-
-![Lock blocks deletion](screenshots/lock-blocks-delete.png)
-
-This demonstrates that Azure resource locks provide a protection layer beyond normal RBAC permissions.
-
-<details>
-<summary><strong>Activity Log evidence</strong></summary>
-
-![Activity Log](screenshots/activity-log-scopelocked.png)
-
-</details>
+A user can have permission to create a resource and still be blocked by Policy if the resource does not meet the organization's rules.
 
 ---
 
-## 5. Rebuilding the Environment with Bicep
+## 4. Resource Locks
 
-After completing the configuration manually, I rebuilt the governance environment in `rg-iam-lab-iac` using **Bicep**.
+I added a **CanNotDelete** lock to protect the resource group from accidental deletion.
 
-The deployment recreated the intended:
+![Resource lock](screenshots/delete%20lock.png)
 
-- Contributor role assignment
-- Reader role assignment
-- Lab Tag Operator assignment
-- Azure Policy assignment
-- `CanNotDelete` lock
+I then tested deleting the protected resource and confirmed that Azure blocked the operation.
 
-Azure CLI was used to verify the deployed configuration.
+![Lock blocks delete](screenshots/lock-blocks-delete.png)
+
+The Activity Log also recorded the failed operation.
+
+![Activity log](screenshots/activity-log-scopelocked.png)
+
+This helped reinforce that resource locks are separate from RBAC.
+
+Having a role such as Contributor does not automatically mean a user can bypass a resource lock.
+
+---
+
+## 5. Rebuilding the Lab with Bicep
+
+After configuring the environment through the Azure portal, I rebuilt the core setup using Bicep.
+
+The Bicep deployment created a separate resource group:
+
+`rg-iam-lab-iac`
+
+The Infrastructure as Code version included the main governance controls from the lab:
+
+- resource group
+- group-based role assignments
+- custom role
+- tag policy
+- resource lock
+
+I validated the deployed configuration after the deployment completed.
 
 ![IaC configuration verified](screenshots/iac-config-verified.png)
 
-The Bicep deployment was then run again using **Incremental mode**.
-
-![Incremental deployment](screenshots/Screenshot%202026-10-04%20213748.png)
-
-The repeat deployment succeeded without creating duplicate role assignments.
-
-This demonstrates the transition from manual administration to **repeatable infrastructure as code**.
+The Bicep version gave me practice moving from portal-based administration to a repeatable deployment.
 
 ---
 
 ## Validation Summary
 
-| Test | Result |
+| What I configured | How I tested it |
 |---|---|
-| Developer inherits Contributor through group | Passed |
-| Developer can deploy resources | Passed |
-| Auditor can read resources | Passed |
-| Auditor write attempt is denied | Passed |
-| Custom role adds tag-write capability | Passed |
-| Policy blocks untagged resource deployment | Passed |
-| Delete lock blocks deletion | Passed |
-| Bicep recreates governance configuration | Passed |
-| Incremental redeployment succeeds | Passed |
-| Lab resources cleaned up | Passed |
+| Developer group RBAC | Developer successfully deployed a resource |
+| Compliance Reader access | Auditor could view resources |
+| Least privilege | Auditor write operation was denied |
+| Custom Tag Operator role | Compliance group received tag-specific permissions |
+| Required-tag Policy | Untagged resource deployment was blocked |
+| Policy compliance | Tagged deployment succeeded |
+| Resource lock | Delete operation was blocked |
+| Infrastructure as Code | Governance configuration rebuilt with Bicep |
 
 ---
 
-## Key Lessons
+## Troubleshooting
 
-**RBAC and Policy solve different problems.**  
-RBAC controls authorization. Policy controls whether a configuration is allowed.
+### RBAC Inheritance
 
-**Least privilege is more precise than broad access.**  
-A custom role supplied the specific tag permission Reader lacked without granting Contributor.
+One area I spent time working through was RBAC scope and inheritance.
 
-**Locks can interrupt legitimate administrative actions.**  
-Even an authorized user cannot delete a protected resource until the lock is removed.
+A role assigned at the resource-group level applies to the resources below that resource group.
 
-**Infrastructure as code improves repeatability.**  
-The same governance configuration can be rebuilt and validated through Bicep rather than recreated manually in the portal.
+That means I did not need to assign the same role individually to every resource.
+
+### Reader vs. Contributor
+
+I also had to correct one of my original role assignments.
+
+The developer group initially had both Reader and Contributor.
+
+That was unnecessary because Contributor already includes the ability to read resources.
+
+I removed the redundant Reader assignment and kept Contributor for the developer group.
+
+### Policy vs. Permissions
+
+Another useful lesson was that having permission to deploy something does not mean Azure has to accept the configuration.
+
+The account could have enough RBAC access to create a resource, but Policy could still deny the deployment if the required tag was missing.
 
 ---
 
-## Scope and Limitations
+## What I Learned
 
-This project intentionally stays within a small lab scope:
+The biggest things I took away from this lab were:
 
-- One Azure subscription
-- Two test users
-- One primary Azure region
-- Resource-group-level governance
+- Group-based RBAC is easier to manage than assigning roles user by user.
+- Azure RBAC permissions are inherited down the resource hierarchy.
+- Contributor and Reader can overlap, so assigning both is usually unnecessary.
+- Custom roles are useful when built-in roles give more access than needed.
+- Azure Policy controls configuration, while RBAC controls permissions.
+- Resource locks provide another layer of protection against accidental changes or deletion.
+- Bicep makes the same configuration repeatable instead of relying only on portal clicks.
 
-It does not implement:
+---
 
-- Conditional Access
+## Scope
+
+This lab focused on core Azure identity and governance features.
+
+It did not include:
+
 - Privileged Identity Management
-- Cross-tenant administration
-- Management-group governance
-- Enterprise-scale landing zones
+- access reviews
+- management groups
+- Conditional Access
+- enterprise-scale policy initiatives
+- production naming or tagging standards
 
-The Bicep deployment used **Incremental mode**, so resources not declared in the template are not automatically removed.
+Those would make sense in a larger identity/governance project.
 
 ---
 
 ## Cleanup
 
-After validation, the lab resource groups and resources were removed.
+After testing, I removed the lab resources that were no longer needed.
 
-![Cleanup verified](screenshots/Screenshot%202026-10-05%20121539.png)
-
-Custom role definitions were deleted separately because role definitions can exist independently of the resource groups where they are assigned.
+Microsoft Entra users and groups were separate from the resource-group cleanup and were managed independently.
 
 ---
 
 ## Repository Structure
 
 ```text
-.
+azure-identity-governance/
 ├── README.md
 ├── bicep/
 │   └── main.bicep
 └── screenshots/
-    └── validation screenshots
 ```
+
+---
+
+## Skills Used
+
+- Microsoft Entra ID
+- Azure RBAC
+- Azure role assignments
+- RBAC scopes and inheritance
+- Custom roles
+- Azure Policy
+- Resource locks
+- Azure Activity Log
+- Bicep
+- Azure Portal
+- Azure CLI
